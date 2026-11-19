@@ -54,7 +54,18 @@ The target supports Mac Catalyst. In Xcode's device selector, choose **My Mac (M
 
 ## Exam mode
 
-GeoGebra's official iOS apps can use iPadOS Guided Access or supervised Single App Mode to keep the user inside the app during an exam. This fork's `WKWebView` wrapper does not currently integrate those native controls and has not been certified for supervised exams. The browser version may require Safe Exam Browser to start an exam. Do not treat a running timer in this wrapper as proof that the device stayed in exam mode. For a real exam, use an approved GeoGebra exam app or a supervised setup required by the institution. Leave exam mode using its visible **Exit Exam** action; this ends the exam and records the exit in its protocol.
+The native **Prüfung** menu integrates the GeoGebra engine's exam lifecycle with iPadOS. Rebuild the web assets after updating: the integration requires the new `IOSExamBridge` compiled into the engine.
+
+1. Export your current construction. Choose **Prüfung > Prüfung vorbereiten**; this reloads Calculator Suite with its exam start dialog.
+2. The app requests `UIAccessibility.requestGuidedAccessSession(enabled: true)`. Automatic locking requires a supervised iPad with an MDM profile allowing this app's bundle identifier to enter Autonomous Single App Mode. An ordinary Personal Team installation does not provide that permission. If iPadOS refuses, manually enable Guided Access and select **Prüfung vorbereiten** again.
+3. Confirm Start in GeoGebra. The engine checks the native lock confirmation before starting. The native banner distinguishes preparation, an active exam, and an interrupted exam. Native calculator switching, file import/export, external navigation, and the debug shortcut are blocked during the session.
+4. Finish and exit using GeoGebra's exam UI. Its `IDLE` transition ends the native session. If the app acquired the lock automatically, it requests automatic release. A manually activated lock must be ended by its owner with the device passcode.
+
+**Prüfung > Protokoll anzeigen** shows timestamped engine state changes, app deactivation/return, lock loss, and blocked external actions. The native record is stored in app preferences across launches, separately from GeoGebra's exam summary. It is a local diagnostic record, not tamper-proof certification. App deactivation or loss of the lock leaves a persistent interrupted indicator even after returning. The engine's existing web exam logging remains enabled.
+
+After the app or web process terminates, the native record is recovered and marked interrupted. It does **not** silently restart the previous engine exam, restore its in-memory constructions, or recreate a continuous timer. Close the interrupted session through the protocol before starting a new one. Full construction/timer recovery after process termination is not implemented. Mac Catalyst can test the app UI, but a locked exam requires a physical iPad. Guided Access does not itself disable Wi-Fi; this implementation does not change network settings.
+
+Run `node --test ios/tests/exam-bridge.test.cjs` to check the host/engine message contract. Before relying on the integration, build in Xcode and test both an ordinary iPad (automatic lock denied, manual fallback) and a supervised allowlisted iPad (automatic lock and release). Verify lock loss, app interruption, process termination, relaunch, and finishing the exam from GeoGebra's summary. The integration has not yet been compiled or device-tested in this Linux workspace.
 
 For testing app switching, a **Debug** build accepts `Skibidi` followed by Enter in a GeoGebra input field. With Guided Access off, the first entry records the time, shows a persistent **TESTBUILD** banner, and opens Safari (or the default browser on Mac). Return to GeoGebra manually and enter `Skibidi` again to record the return. With Guided Access on, iPadOS blocks app switching; the test command displays a message instead of attempting to disable it. These test events are stored separately in the app's preferences; they do not change GeoGebra's exam state, restore an iPad lock, or certify a continuous exam. Release builds do not include this shortcut.
 
@@ -70,7 +81,7 @@ The app starts Calculator Suite. Use the native **Rechner** menu to select Suite
 
 ## Implementation status
 
-The native iOS integration does not yet provide autonomous Single App Mode, native math rendering, a native CAS engine, verified account sign-in, or full parity with the official app. Autonomous Single App Mode requires a supervised device and an appropriate device-management configuration. Manually enabled Guided Access is controlled by iPadOS and the device owner. These requirements cannot be supplied by adding an Xcode setting to this fork. Full native parity requires porting or replacing the Java/GWT rendering and platform adapters and testing the result against the official app on Apple hardware.
+The integration requests Autonomous Single App Mode on supported managed devices; the required supervision and MDM allowlist cannot be supplied by adding an Xcode setting. Native math rendering, a native CAS engine, verified account sign-in, complete crash recovery, and full parity with the official app remain outstanding. Full native parity requires porting or replacing the Java/GWT rendering and platform adapters and testing the result against the official app on Apple hardware.
 
 ## Troubleshooting
 

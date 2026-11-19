@@ -21,6 +21,7 @@ import java.util.List;
 
 import org.geogebra.common.exam.ExamListener;
 import org.geogebra.common.exam.ExamState;
+import org.geogebra.web.html5.bridge.IOSExamBridge;
 
 public final class ExamEventBus implements ExamListener {
 	private final List<ExamListener> childListeners = new ArrayList<>();
@@ -35,6 +36,10 @@ public final class ExamEventBus implements ExamListener {
 
 	@Override
 	public void examStateChanged(ExamState newState) {
+		IOSExamBridge iosExamBridge = IOSExamBridge.get();
+		if (iosExamBridge != null) {
+			iosExamBridge.stateChanged(newState.name());
+		}
 		childListeners.forEach(listener -> listener.examStateChanged(newState));
 	}
 }

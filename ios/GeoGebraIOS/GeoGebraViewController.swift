@@ -10,11 +10,19 @@ final class GeoGebraViewController: UIViewController {
         case savePreference
         case debug
         case testToggle
+        case examState
+        case examLockRequired
     }
 
     private var webView: WKWebView!
     private var selectedCalculator = "suite"
     private let lockButton = UIBarButtonItem()
+    private var examActive = false
+    private var ownsExamLock = false
+    private var examInterrupted = false
+    private var engineExamStarted = false
+    private let examDefaults = UserDefaults.standard
+    private let examStatus = UILabel()
     #if DEBUG
     private var testingOutsideApp = false
     private let testLabel = UILabel()
@@ -61,6 +69,7 @@ final class GeoGebraViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         configureNativeControls()
+        configureExamIntegration()
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(openDocumentNotification(_:)),
@@ -112,7 +121,13 @@ final class GeoGebraViewController: UIViewController {
                 subdirectory: "WebAssets"
               )
         guard let entryPoint = entryPoint else { return }
-        webView.loadFileURL(entryPoint, allowingReadAccessTo: assetDirectory)
+        if examActive && !examInterrupted {
+            var components = URLComponents(url: entryPoint, resolvingAgainstBaseURL: false)
+            components?.queryItems = [URLQueryItem(name: "examMode", value: "generic")]
+            webView.loadFileURL(components?.url ?? entryPoint, allowingReadAccessTo: assetDirectory)
+        } else {
+            webView.loadFileURL(entryPoint, allowingReadAccessTo: assetDirectory)
+        }
     }
 
     private func configureNativeControls() {
@@ -125,6 +140,7 @@ final class GeoGebraViewController: UIViewController {
         let actions = calculators.map { id, name in
             UIAction(title: name) { [weak self] _ in
                 guard let self = self, self.selectedCalculator != id else { return }
+                guard !self.examActive else { return }
                 let alert = UIAlertController(
                     title: "Rechner wechseln?",
                     message: "Exportiere deine Konstruktion zuerst. Beim Wechsel wird die aktuelle Ansicht neu geladen.",
@@ -146,6 +162,10 @@ final class GeoGebraViewController: UIViewController {
         lockButton.action = #selector(explainGuidedAccess)
         lockButton.accessibilityLabel = "Status des Geführten Zugriffs"
         navigationItem.rightBarButtonItems = [
+            UIBarButtonItem(title: "Prüfung", menu: UIMenu(children: [
+                UIAction(title: "Prüfung vorbereiten") { [weak self] _ in self?.prepareNativeExam() },
+                UIAction(title: "Protokoll anzeigen") { [weak self] _ in self?.showExamLog() }
+            ])),
             UIBarButtonItem(title: "Export", style: .plain, target: self, action: #selector(exportConstruction)),
             UIBarButtonItem(title: "Öffnen", style: .plain, target: self, action: #selector(openConstruction)),
             lockButton
@@ -154,10 +174,12 @@ final class GeoGebraViewController: UIViewController {
     }
 
     @objc private func openConstruction() {
+        guard !examActive else { return }
         presentDocumentPicker()
     }
 
     @objc private func exportConstruction() {
+        guard !examActive else { return }
         let script = """
         if (!window.ggbApplet || typeof window.ggbApplet.getBase64 !== 'function') {
             throw new Error('GeoGebra wird noch geladen. Bitte erneut versuchen.');
@@ -184,6 +206,181 @@ final class GeoGebraViewController: UIViewController {
         #else
         lockButton.image = UIImage(systemName: UIAccessibility.isGuidedAccessEnabled ? "lock.fill" : "lock.open")
         #endif
+        if examActive {
+            #if !targetEnvironment(macCatalyst)
+            if !UIAccessibility.isGuidedAccessEnabled {
+                examInterrupted = true
+                appendExamEvent("Gerätesperre aufgehoben")
+            }
+            #endif
+            publishExamLock()
+            refreshExamStatus()
+        }
+    }
+
+    private func configureExamIntegration() {
+        ownsExamLock = examDefaults.bool(forKey: "GeoGebra.ownsExamLock")
+        examStatus.font = .monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
+        examStatus.textAlignment = .center
+        examStatus.textColor = .white
+        examStatus.backgroundColor = .systemRed
+        examStatus.isHidden = true
+        examStatus.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(examStatus)
+        NSLayoutConstraint.activate([
+            examStatus.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            examStatus.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            examStatus.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            examStatus.heightAnchor.constraint(equalToConstant: 30)
+        ])
+        NotificationCenter.default.addObserver(self, selector: #selector(examWillResign),
+            name: UIApplication.willResignActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(examDidBecomeActive),
+            name: UIApplication.didBecomeActiveNotification, object: nil)
+        if examDefaults.bool(forKey: "GeoGebra.examActive") {
+            // A new engine cannot restore a previous in-memory ExamController safely.
+            // Preserve its record and explicitly mark the session interrupted.
+            examActive = true
+            examInterrupted = true
+            appendExamEvent("App-Neustart: Prüfung unterbrochen, keine automatische Fortsetzung")
+            refreshExamStatus()
+        }
+    }
+
+    private func appendExamEvent(_ text: String) {
+        var events = examDefaults.stringArray(forKey: "GeoGebra.examLog") ?? []
+        events.append(ISO8601DateFormatter().string(from: Date()) + " · " + text)
+        examDefaults.set(events, forKey: "GeoGebra.examLog")
+        examDefaults.set(examActive, forKey: "GeoGebra.examActive")
+        examDefaults.set(examInterrupted, forKey: "GeoGebra.examInterrupted")
+    }
+
+    private func refreshExamStatus() {
+        examStatus.isHidden = !examActive
+        examStatus.text = examInterrupted ? "PRÜFUNG UNTERBROCHEN · siehe Protokoll"
+            : (engineExamStarted ? "PRÜFUNG · Gerätesperre aktiv" : "PRÜFUNG VORBEREITET · Start in GeoGebra bestätigen")
+        examStatus.backgroundColor = examInterrupted ? .systemRed : .systemBlue
+        navigationItem.leftBarButtonItem?.isEnabled = !examActive
+    }
+
+    private func publishExamLock() {
+        #if targetEnvironment(macCatalyst)
+        let locked = false
+        #else
+        let locked = UIAccessibility.isGuidedAccessEnabled && examActive && !examInterrupted
+        #endif
+        webView.evaluateJavaScript("window.GeoGebraIOSExamLockReady = \(locked ? "true" : "false");")
+    }
+
+    private func prepareNativeExam() {
+        #if targetEnvironment(macCatalyst)
+        showError(title: "Prüfungssperre nicht verfügbar", message: "Eine gesperrte Prüfung benötigt ein echtes iPad. Mac Catalyst unterstützt Geführten Zugriff nicht.")
+        #else
+        guard !examActive else {
+            showExamLog()
+            return
+        }
+        let alert = UIAlertController(title: "Prüfung vorbereiten?",
+            message: "Die aktuelle Konstruktion wird verworfen. Auf verwalteten iPads wird die Gerätesperre angefordert. Andernfalls aktiviere zuerst den Geführten Zugriff per Dreifachklick.", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Abbrechen", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Vorbereiten", style: .default) { [weak self] _ in
+            guard let self = self else { return }
+            if UIAccessibility.isGuidedAccessEnabled {
+                self.launchExamPage()
+            } else {
+                UIAccessibility.requestGuidedAccessSession(enabled: true) { [weak self] success in
+                    DispatchQueue.main.async {
+                        guard let self = self else { return }
+                        if success && UIAccessibility.isGuidedAccessEnabled {
+                            self.ownsExamLock = true
+                            self.examDefaults.set(true, forKey: "GeoGebra.ownsExamLock")
+                            self.launchExamPage()
+                        } else {
+                            self.showError(title: "Manuelle Sperre erforderlich", message: "Die automatische Sperre wurde von iPadOS abgelehnt. Aktiviere Geführten Zugriff und wähle danach erneut Prüfung vorbereiten.")
+                        }
+                    }
+                }
+            }
+        })
+        present(alert, animated: true)
+        #endif
+    }
+
+    private func launchExamPage() {
+        examActive = true
+        examInterrupted = false
+        selectedCalculator = "suite"
+        appendExamEvent("Prüfung vorbereitet; Gerätesperre bestätigt")
+        refreshExamStatus()
+        loadGeoGebra()
+    }
+
+    private func receiveExamState(_ state: String) {
+        guard ["ACTIVE", "FINISHED", "IDLE", "PREPARING"].contains(state) else { return }
+        appendExamEvent("GeoGebra: " + state)
+        if state == "ACTIVE" {
+            examActive = true
+            engineExamStarted = true
+            #if !targetEnvironment(macCatalyst)
+            if !UIAccessibility.isGuidedAccessEnabled {
+                examInterrupted = true
+                appendExamEvent("Start ohne bestätigte Sperre: Sitzung unterbrochen")
+            }
+            #endif
+            examDefaults.set(true, forKey: "GeoGebra.examActive")
+        } else if state == "IDLE" {
+            examActive = false
+            examDefaults.set(false, forKey: "GeoGebra.examActive")
+            releaseOwnedExamLock()
+        }
+        refreshExamStatus()
+    }
+
+    private func releaseOwnedExamLock() {
+        #if !targetEnvironment(macCatalyst)
+        guard ownsExamLock else { return }
+        UIAccessibility.requestGuidedAccessSession(enabled: false) { [weak self] success in
+            DispatchQueue.main.async {
+                self?.appendExamEvent(success ? "Automatische Sperre beendet" : "Entsperren abgelehnt; manuell beenden")
+                if success {
+                    self?.ownsExamLock = false
+                    self?.examDefaults.set(false, forKey: "GeoGebra.ownsExamLock")
+                }
+            }
+        }
+        #endif
+    }
+
+    @objc private func examWillResign() {
+        guard examActive else { return }
+        examInterrupted = true
+        appendExamEvent("App nicht mehr aktiv")
+        publishExamLock()
+        refreshExamStatus()
+    }
+
+    @objc private func examDidBecomeActive() {
+        guard examActive else { return }
+        appendExamEvent("Zur App zurückgekehrt")
+        updateGuidedAccessStatus()
+    }
+
+    private func showExamLog() {
+        let events = examDefaults.stringArray(forKey: "GeoGebra.examLog") ?? []
+        let alert = UIAlertController(title: "Prüfungsprotokoll", message: events.suffix(60).joined(separator: "\n"), preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Schließen", style: .cancel))
+        if examActive && (examInterrupted || !engineExamStarted) {
+            alert.addAction(UIAlertAction(title: "Unterbrochene Sitzung abschließen", style: .destructive) { [weak self] _ in
+                guard let self = self else { return }
+                self.examActive = false
+                self.engineExamStarted = false
+                self.appendExamEvent("Unterbrochene Sitzung abgeschlossen")
+                self.releaseOwnedExamLock()
+                self.refreshExamStatus()
+                self.loadGeoGebra()
+            })
+        }
+        present(alert, animated: true)
     }
 
     @objc private func explainGuidedAccess() {
@@ -199,6 +396,10 @@ final class GeoGebraViewController: UIViewController {
     }
 
     @objc private func openDocumentNotification(_ notification: Notification) {
+        guard !examActive else {
+            appendExamEvent("Externer Dateiimport während Prüfung blockiert")
+            return
+        }
         guard let url = notification.object as? URL else { return }
         importDocument(at: url)
     }
@@ -246,6 +447,7 @@ final class GeoGebraViewController: UIViewController {
     }
 
     private func presentDocumentPicker() {
+        guard !examActive else { return }
         let ggbType = UTType(importedAs: "org.geogebra.ggb", conformingTo: .data)
         let picker = UIDocumentPickerViewController(forOpeningContentTypes: [ggbType, .data])
         picker.delegate = self
@@ -328,6 +530,15 @@ final class GeoGebraViewController: UIViewController {
             const handler = window.webkit && window.webkit.messageHandlers[name];
             if (handler) handler.postMessage(body);
         };
+        window.GeoGebraIOSExamLockReady = false;
+        window.GeoGebraIOSExamBridge = {
+            canStart: () => {
+                if (window.GeoGebraIOSExamLockReady === true) return true;
+                post('examLockRequired');
+                return false;
+            },
+            stateChanged: state => post('examState', { state })
+        };
         window.GeoGebraJSNativeBridge = {
             share: (data, name, fileType) => post('share', { data, name, fileType }),
             savePreference: (key, value) => post('savePreference', { key, value }),
@@ -368,6 +579,7 @@ final class GeoGebraViewController: UIViewController {
     """#
 
     private func toggleExamTest() {
+        guard !examActive else { return }
         #if !targetEnvironment(macCatalyst)
         if UIAccessibility.isGuidedAccessEnabled {
             showError(
@@ -402,6 +614,10 @@ extension GeoGebraViewController: WKScriptMessageHandler {
         case .openFile:
             presentDocumentPicker()
         case .openURL:
+            guard !examActive else {
+                appendExamEvent("Externer Link während Prüfung blockiert")
+                return
+            }
             guard let payload = message.body as? [String: Any],
                   let value = payload["url"] as? String,
                   let url = URL(string: value),
@@ -420,6 +636,12 @@ extension GeoGebraViewController: WKScriptMessageHandler {
             #if DEBUG
             toggleExamTest()
             #endif
+        case .examState:
+            guard let payload = message.body as? [String: Any],
+                  let state = payload["state"] as? String else { return }
+            receiveExamState(state)
+        case .examLockRequired:
+            showError(title: "Prüfungssperre fehlt", message: "Wähle Prüfung > Prüfung vorbereiten. Der Start ist erst nach bestätigter Gerätesperre möglich. Eine unterbrochene Sitzung muss zuerst über das Protokoll abgeschlossen werden.")
         }
     }
 }
@@ -432,6 +654,17 @@ extension GeoGebraViewController: UIDocumentPickerDelegate {
 }
 
 extension GeoGebraViewController: WKNavigationDelegate {
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        publishExamLock()
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard examActive else { return }
+        examInterrupted = true
+        appendExamEvent("GeoGebra-Webprozess beendet: Sitzung unterbrochen")
+        refreshExamStatus()
+    }
+
     func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,
@@ -441,6 +674,11 @@ extension GeoGebraViewController: WKNavigationDelegate {
               let url = navigationAction.request.url,
               ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
             decisionHandler(.allow)
+            return
+        }
+        if examActive {
+            appendExamEvent("Navigation zu externer Seite während Prüfung blockiert")
+            decisionHandler(.cancel)
             return
         }
         UIApplication.shared.open(url)

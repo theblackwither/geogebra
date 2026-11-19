@@ -186,6 +186,7 @@ import org.geogebra.web.full.move.googledrive.operations.GoogleDriveOperationW;
 import org.geogebra.web.full.mow.header.DefaultTopBarIconProvider;
 import org.geogebra.web.full.mow.header.MebisTopBarIconProvider;
 import org.geogebra.web.html5.Browser;
+import org.geogebra.web.html5.bridge.IOSExamBridge;
 import org.geogebra.web.html5.euclidian.EuclidianViewW;
 import org.geogebra.web.html5.gui.GPopupPanel;
 import org.geogebra.web.html5.gui.GeoGebraFrameW;
@@ -2425,6 +2426,10 @@ public class AppWFull extends AppW implements HasKeyboard, MenuViewListener {
 	 * @param options exam options used for Classic
 	 */
 	public void startExam(ExamType examType, ExamOptions options) {
+		IOSExamBridge iosExamBridge = IOSExamBridge.get();
+		if (iosExamBridge != null && !iosExamBridge.canStart()) {
+			return;
+		}
 		ExamControllerIntegrationW.activate(this);
 		examController.addListener(getExamEventBus());
 		if (examController.getState() == ExamState.IDLE
