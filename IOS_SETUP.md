@@ -56,6 +56,8 @@ The target supports Mac Catalyst. In Xcode's device selector, choose **My Mac (M
 
 GeoGebra's web code includes an exam mode, but this iPad/Mac Catalyst wrapper does not lock other apps or network settings and has not been certified for supervised exams. The browser version may require Safe Exam Browser to start an exam. Do not treat a running timer in this wrapper as proof that the device stayed in exam mode. For a real exam, use an approved GeoGebra exam app or a supervised setup required by the institution. Leave exam mode using its visible **Exit Exam** action; this ends the exam and records the exit in its protocol.
 
+For testing app switching, a **Debug** build accepts `Skibidi` followed by Enter in a GeoGebra input field. The first entry records the time, shows a persistent **TESTBUILD** banner, and opens Safari (or the default browser on Mac). Return to GeoGebra manually and enter `Skibidi` again to record the return. These test events are stored separately in the app's preferences; they do not change GeoGebra's exam state, restore an iPad lock, or certify a continuous exam. Release builds do not include this shortcut.
+
 ## Using files
 
 - To open a construction, use GeoGebra's **Open** action or tap a `.ggb` file in the Files app and choose GeoGebra.

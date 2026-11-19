@@ -9,9 +9,14 @@ final class GeoGebraViewController: UIViewController {
         case openURL
         case savePreference
         case debug
+        case testToggle
     }
 
     private var webView: WKWebView!
+    #if DEBUG
+    private var testingOutsideApp = false
+    private let testLabel = UILabel()
+    #endif
     override func loadView() {
         let configuration = WKWebViewConfiguration()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
@@ -25,6 +30,13 @@ final class GeoGebraViewController: UIViewController {
                 forMainFrameOnly: true
             )
         )
+        #if DEBUG
+        contentController.addUserScript(WKUserScript(
+            source: Self.examTestScript,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        ))
+        #endif
         configuration.userContentController = contentController
 
         webView = WKWebView(frame: .zero, configuration: configuration)
@@ -44,6 +56,21 @@ final class GeoGebraViewController: UIViewController {
             object: nil
         )
         loadGeoGebra()
+        #if DEBUG
+        testLabel.text = "TESTBUILD · keine Prüfungssperre"
+        testLabel.textAlignment = .center
+        testLabel.textColor = .white
+        testLabel.backgroundColor = .systemOrange
+        testLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        testLabel.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(testLabel)
+        NSLayoutConstraint.activate([
+            testLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            testLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            testLabel.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            testLabel.heightAnchor.constraint(equalToConstant: 30)
+        ])
+        #endif
     }
 
     deinit {
@@ -222,6 +249,38 @@ final class GeoGebraViewController: UIViewController {
         };
     })();
     """#
+
+    #if DEBUG
+    private static let examTestScript = #"""
+    document.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' || event.isComposing) return;
+        const input = event.target.closest('input, textarea, [contenteditable="true"]');
+        if (!input) return;
+        const value = (input.value ?? input.textContent ?? '').trim();
+        if (value !== 'Skibidi') return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if ('value' in input) input.value = '';
+        else input.textContent = '';
+        window.webkit.messageHandlers.testToggle.postMessage({});
+    }, true);
+    """#
+
+    private func toggleExamTest() {
+        testingOutsideApp.toggle()
+        let time = ISO8601DateFormatter().string(from: Date())
+        let event = testingOutsideApp ? "left app" : "returned to app"
+        var events = UserDefaults.standard.stringArray(forKey: "GeoGebra.examTestEvents") ?? []
+        events.append("\(time): \(event)")
+        UserDefaults.standard.set(events, forKey: "GeoGebra.examTestEvents")
+        testLabel.text = testingOutsideApp
+            ? "TESTBUILD · App-Wechsel protokolliert"
+            : "TESTBUILD · zurück in GeoGebra"
+        if testingOutsideApp, let url = URL(string: "https://example.com") {
+            UIApplication.shared.open(url)
+        }
+    }
+    #endif
 }
 
 extension GeoGebraViewController: WKScriptMessageHandler {
@@ -246,6 +305,10 @@ extension GeoGebraViewController: WKScriptMessageHandler {
         case .debug:
             #if DEBUG
             print("GeoGebra:", message.body)
+            #endif
+        case .testToggle:
+            #if DEBUG
+            toggleExamTest()
             #endif
         }
     }
