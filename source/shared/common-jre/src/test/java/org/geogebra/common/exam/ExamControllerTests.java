@@ -73,6 +73,29 @@ final class ExamControllerTests extends BaseExamTestSetup implements ExamControl
 	// State & duration
 
 	@Test
+	void restoreInterruptedExamClockRetainsOriginalStartAndMarksInterruption() {
+		setupApp(SuiteSubApp.GRAPHING);
+		examController.startExam(ExamType.GENERIC, null);
+		long originalStart = System.currentTimeMillis() - 120000;
+		examController.restoreInterruptedStartTime(originalStart);
+		assertEquals(originalStart, examController.getStartDate().getTime());
+		assertTrue(examController.isCheating());
+		assertEquals(2, examController.getCheatingEvents().size());
+	}
+
+	@Test
+	void rejectInvalidRecoveryClock() {
+		assertThrows(IllegalArgumentException.class,
+				() -> examController.restoreInterruptedStartTime(1));
+		setupApp(SuiteSubApp.GRAPHING);
+		examController.startExam(ExamType.GENERIC, null);
+		assertThrows(IllegalArgumentException.class,
+				() -> examController.restoreInterruptedStartTime(0));
+		assertThrows(IllegalArgumentException.class,
+				() -> examController.restoreInterruptedStartTime(Long.MAX_VALUE));
+	}
+
+	@Test
 	void testPrepareExam() {
 		setupApp(SuiteSubApp.GRAPHING);
 		assertEquals(ExamState.IDLE, examController.getState());

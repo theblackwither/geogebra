@@ -9,6 +9,8 @@
 
 package org.geogebra.web.html5.bridge;
 
+import org.geogebra.gwtutil.JsRunnable;
+
 import jsinterop.annotations.JsPackage;
 import jsinterop.annotations.JsProperty;
 import jsinterop.annotations.JsType;
@@ -23,4 +25,10 @@ public class IOSExamBridge {
 	public native boolean canStart();
 
 	public native void stateChanged(String state);
+
+	public native double resumeStartTime();
+
+	public native void checkpointMeta(double startTime, String examType);
+
+	public native void setInterruptionHandler(JsRunnable callback);
 }

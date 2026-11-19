@@ -317,6 +317,20 @@ public final class ExamController {
 	}
 
 	/**
+	 * Restore an interrupted session's clock, retaining an interruption in its summary.
+	 * @param startTime original start time in epoch milliseconds
+	 */
+	public void restoreInterruptedStartTime(long startTime) {
+		if (state != ExamState.ACTIVE || startTime <= 0
+				|| startTime > System.currentTimeMillis()) {
+			throw new IllegalArgumentException("Invalid interrupted exam start time");
+		}
+		startDate = new Date(startTime);
+		cheatingEvents.addWindowLeftEvent();
+		cheatingEvents.addWindowEnteredEvent();
+	}
+
+	/**
 	 * Finish the current exam.
 	 * @throws IllegalStateException if the exam controller is not in the {@link ExamState#ACTIVE ACTIVE}
 	 * state.

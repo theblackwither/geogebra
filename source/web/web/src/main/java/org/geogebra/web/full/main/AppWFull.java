@@ -2435,6 +2435,19 @@ public class AppWFull extends AppW implements HasKeyboard, MenuViewListener {
 		if (examController.getState() == ExamState.IDLE
 				|| examController.getState() == ExamState.PREPARING) {
 			examController.startExam(examType, options);
+			if (iosExamBridge != null) {
+				iosExamBridge.setInterruptionHandler(() -> {
+					if (examController.isExamActive()) {
+						examController.getCheatingEvents().addScreenUnlockedEvent();
+					}
+				});
+				double resumeTime = iosExamBridge.resumeStartTime();
+				if (resumeTime > 0 && resumeTime <= System.currentTimeMillis()) {
+					examController.restoreInterruptedStartTime((long) resumeTime);
+				}
+				iosExamBridge.checkpointMeta(examController.getStartDate().getTime(),
+						examType.name());
+			}
 		}
 		if (supportsExamUI()) {
 			getLAF().toggleFullscreen(true);

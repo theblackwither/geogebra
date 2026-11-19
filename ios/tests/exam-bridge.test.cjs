@@ -42,3 +42,40 @@ test('a fresh web process never inherits a previous lock confirmation', () => {
     const recovered = host();
     assert.equal(recovered.window.GeoGebraIOSExamBridge.canStart(), false);
 });
+
+test('recovery start time and checkpoint metadata cross the bridge unchanged', () => {
+    const { window, events } = host();
+    assert.equal(window.GeoGebraIOSExamBridge.resumeStartTime(), 0);
+    window.GeoGebraIOSResumeStart = 1700000000123;
+    assert.equal(window.GeoGebraIOSExamBridge.resumeStartTime(), 1700000000123);
+    window.GeoGebraIOSExamBridge.checkpointMeta(1700000000123, 'GENERIC');
+    assert.equal(events[0].name, 'examMeta');
+    assert.equal(events[0].body.startTime, 1700000000123);
+    assert.equal(events[0].body.examType, 'GENERIC');
+});
+
+test('skibidi command accepts either case, ignores other input and IME composition', () => {
+    const script = swift.match(/private static let examCommandScript = #"""\n([\s\S]*?)\n    """#/)[1];
+    let listener;
+    let requests = 0;
+    vm.runInNewContext(script, {
+        document: { addEventListener: (_, callback) => { listener = callback; } },
+        window: { webkit: { messageHandlers: { examToggle: { postMessage: () => requests++ } } } }
+    });
+    for (const [text, composing, expected] of [
+        ['skibidi', false, 1], ['Skibidi', false, 2], ['x+1', false, 2], ['skibidi', true, 2]
+    ]) {
+        listener({ key: 'Enter', isComposing: composing,
+            target: { closest: () => ({ value: text }) },
+            preventDefault() {}, stopImmediatePropagation() {} });
+        assert.equal(requests, expected);
+    }
+});
+
+test('native interruptions can reach the engine summary', () => {
+    const { window } = host();
+    let interruptions = 0;
+    window.GeoGebraIOSExamBridge.setInterruptionHandler(() => interruptions++);
+    window.GeoGebraIOSInterruptionHandler();
+    assert.equal(interruptions, 1);
+});
