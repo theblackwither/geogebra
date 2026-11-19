@@ -267,6 +267,15 @@ final class GeoGebraViewController: UIViewController {
     """#
 
     private func toggleExamTest() {
+        #if !targetEnvironment(macCatalyst)
+        if UIAccessibility.isGuidedAccessEnabled {
+            showError(
+                title: "Guided Access is active",
+                message: "End Guided Access with the device owner's passcode before testing app switching."
+            )
+            return
+        }
+        #endif
         testingOutsideApp.toggle()
         let time = ISO8601DateFormatter().string(from: Date())
         let event = testingOutsideApp ? "left app" : "returned to app"
