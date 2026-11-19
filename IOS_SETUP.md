@@ -1,6 +1,6 @@
 # Build and install GeoGebra on an iPad
 
-This repository now includes an iPad app in `ios/GeoGebraIOS.xcodeproj`. It embeds the repository's compiled web application in a native `WKWebView`, preserving GeoGebra's iOS touch and keyboard support. The native shell also supports opening `.ggb` files from the Files app and exporting constructions or images through the iOS share sheet.
+This repository includes an iPad app in `ios/GeoGebraIOS.xcodeproj`. Native UIKit navigation provides calculator selection, document import, construction export, and a live Guided Access status indicator. GeoGebra's Java/GWT engine and mathematical UI still execute in a bundled `WKWebView`; this is an incremental iOS integration, not a completed native rewrite or a feature-equivalent replacement for the official iOS app.
 
 ## Requirements
 
@@ -66,7 +66,11 @@ For testing app switching, a **Debug** build accepts `Skibidi` followed by Enter
 
 ## Changing the included calculator
 
-The app starts `graphing-offline.html`. To use a different generated app, change `graphing-offline` in `loadGeoGebra()` inside `ios/GeoGebraIOS/GeoGebraViewController.swift`. Available generated entry points include `suite-offline`, `geometry-offline`, `cas-offline`, `3d-offline`, and `classic-offline`.
+The app starts Calculator Suite. Use the native **Rechner** menu to select Suite, Classic, Graphing, Geometry, CAS, 3D, or Scientific. Export your construction before switching; switching reloads the engine. The native **Öffnen** button opens the Files picker, and **Export** creates a `.ggb` construction through the engine API and presents the share sheet. The lock icon reports Guided Access status on iPad; tap it for setup instructions. Mac Catalyst shows an information icon because Guided Access is unavailable on macOS.
+
+## Implementation status
+
+The native iOS integration does not yet provide autonomous Single App Mode, native math rendering, a native CAS engine, verified account sign-in, or full parity with the official app. Autonomous Single App Mode requires a supervised device and an appropriate device-management configuration. Manually enabled Guided Access is controlled by iPadOS and the device owner. These requirements cannot be supplied by adding an Xcode setting to this fork. Full native parity requires porting or replacing the Java/GWT rendering and platform adapters and testing the result against the official app on Apple hardware.
 
 ## Troubleshooting
 

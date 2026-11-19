@@ -13,6 +13,8 @@ final class GeoGebraViewController: UIViewController {
     }
 
     private var webView: WKWebView!
+    private var selectedCalculator = "suite"
+    private let lockButton = UIBarButtonItem()
     #if DEBUG
     private var testingOutsideApp = false
     private let testLabel = UILabel()
@@ -44,11 +46,21 @@ final class GeoGebraViewController: UIViewController {
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.isOpaque = false
         webView.backgroundColor = .systemBackground
-        view = webView
+        view = UIView()
+        view.backgroundColor = .systemBackground
+        webView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(webView)
+        NSLayoutConstraint.activate([
+            webView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            webView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
+            webView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
+        ])
     }
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        configureNativeControls()
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(openDocumentNotification(_:)),
@@ -56,6 +68,12 @@ final class GeoGebraViewController: UIViewController {
             object: nil
         )
         loadGeoGebra()
+        #if !targetEnvironment(macCatalyst)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(updateGuidedAccessStatus),
+            name: UIAccessibility.guidedAccessStatusDidChangeNotification, object: nil
+        )
+        #endif
         #if DEBUG
         testLabel.text = "TESTBUILD · keine Prüfungssperre"
         testLabel.textAlignment = .center
@@ -85,7 +103,7 @@ final class GeoGebraViewController: UIViewController {
             return
         }
         let entryPoint = Bundle.main.url(
-                forResource: "graphing-offline",
+                forResource: selectedCalculator + "-offline",
                 withExtension: "html",
                 subdirectory: "WebAssets"
               ) ?? Bundle.main.url(
@@ -95,6 +113,89 @@ final class GeoGebraViewController: UIViewController {
               )
         guard let entryPoint = entryPoint else { return }
         webView.loadFileURL(entryPoint, allowingReadAccessTo: assetDirectory)
+    }
+
+    private func configureNativeControls() {
+        title = "GeoGebra · Rechner Suite"
+        let calculators = [
+            ("suite", "Rechner Suite"), ("classic", "Classic"),
+            ("graphing", "Grafikrechner"), ("geometry", "Geometrie"),
+            ("cas", "CAS"), ("3d", "3D"), ("scientific", "Wissenschaftlich")
+        ]
+        let actions = calculators.map { id, name in
+            UIAction(title: name) { [weak self] _ in
+                guard let self = self, self.selectedCalculator != id else { return }
+                let alert = UIAlertController(
+                    title: "Rechner wechseln?",
+                    message: "Exportiere deine Konstruktion zuerst. Beim Wechsel wird die aktuelle Ansicht neu geladen.",
+                    preferredStyle: .alert
+                )
+                alert.addAction(UIAlertAction(title: "Abbrechen", style: .cancel))
+                alert.addAction(UIAlertAction(title: "Wechseln", style: .destructive) { _ in
+                    self.selectedCalculator = id
+                    self.title = "GeoGebra · " + name
+                    self.loadGeoGebra()
+                })
+                self.present(alert, animated: true)
+            }
+        }
+        navigationItem.leftBarButtonItem = UIBarButtonItem(
+            title: "Rechner", menu: UIMenu(children: actions)
+        )
+        lockButton.target = self
+        lockButton.action = #selector(explainGuidedAccess)
+        lockButton.accessibilityLabel = "Status des Geführten Zugriffs"
+        navigationItem.rightBarButtonItems = [
+            UIBarButtonItem(title: "Export", style: .plain, target: self, action: #selector(exportConstruction)),
+            UIBarButtonItem(title: "Öffnen", style: .plain, target: self, action: #selector(openConstruction)),
+            lockButton
+        ]
+        updateGuidedAccessStatus()
+    }
+
+    @objc private func openConstruction() {
+        presentDocumentPicker()
+    }
+
+    @objc private func exportConstruction() {
+        let script = """
+        if (!window.ggbApplet || typeof window.ggbApplet.getBase64 !== 'function') {
+            throw new Error('GeoGebra wird noch geladen. Bitte erneut versuchen.');
+        }
+        return await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error('Exportzeit überschritten.')), 30000);
+            window.ggbApplet.getBase64(data => { clearTimeout(timeout); resolve(data); });
+        });
+        """
+        webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { [weak self] result in
+            switch result {
+            case .success(let value):
+                guard let data = value as? String else { return }
+                self?.share(["data": data, "name": "Konstruktion", "fileType": "ggb"])
+            case .failure(let error):
+                self?.showError(title: "Export nicht möglich", message: error.localizedDescription)
+            }
+        }
+    }
+
+    @objc private func updateGuidedAccessStatus() {
+        #if targetEnvironment(macCatalyst)
+        lockButton.image = UIImage(systemName: "info.circle")
+        #else
+        lockButton.image = UIImage(systemName: UIAccessibility.isGuidedAccessEnabled ? "lock.fill" : "lock.open")
+        #endif
+    }
+
+    @objc private func explainGuidedAccess() {
+        #if targetEnvironment(macCatalyst)
+        showError(title: "Geführter Zugriff", message: "Geführter Zugriff ist eine iPadOS-Funktion und auf diesem Mac nicht verfügbar.")
+        #else
+        let active = UIAccessibility.isGuidedAccessEnabled
+        showError(
+            title: active ? "Geführter Zugriff aktiv" : "Geführter Zugriff nicht aktiv",
+            message: "Aktiviere ihn unter Einstellungen > Bedienungshilfen > Geführter Zugriff. Starte oder beende ihn mit dem Dreifachklick auf die obere Taste bzw. Home-Taste. Der Prüfungsmodus und die Gerätesperre sind getrennte Zustände."
+        )
+        #endif
     }
 
     @objc private func openDocumentNotification(_ notification: Notification) {
