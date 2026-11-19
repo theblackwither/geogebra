@@ -1,0 +1,6 @@
+GeoGebraIOS/WebAssets/*
+!GeoGebraIOS/WebAssets/.keep
+!GeoGebraIOS/WebAssets/missing-assets.html
+*.xcuserstate
+xcuserdata/
+DerivedData/

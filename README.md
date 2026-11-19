@@ -1,5 +1,7 @@
 # Welcome to GeoGebra!
 
+To build and install this fork as an iPad app, see [IOS_SETUP.md](IOS_SETUP.md).
+
 
 This repository contains source code of [GeoGebra](https://www.geogebra.org)'s math apps.
 It is available on a private GitLab instance and mirrored to GitHub.
